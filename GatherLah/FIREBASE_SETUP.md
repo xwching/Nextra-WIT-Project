@@ -38,18 +38,20 @@
 4. Select your preferred location (closest to your users)
 5. Click **"Enable"**
 
-### 3c. Enable Storage
+### 3c. Enable Storage (Optional/Paid - Skip for now)
+
+Storage is optional for GatherLah since the app currently uses emoji avatars. Skip this step if you're on a free/limited plan.
+
+**To enable later when needed:**
 
 1. Go to **Build → Storage**
 2. Click **"Get started"**
 3. Start in **test mode**
 4. Click **"Done"**
 
-### 3d. Enable Cloud Functions (Optional for now)
-
-1. Go to **Build → Functions**
-2. Click **"Get started"**
-3. Follow setup instructions (you can do this later)
+5. Go to **Build → Functions**
+6. Click **"Get started"**
+7. Follow setup instructions (you can do this later)
 
 ---
 
@@ -81,12 +83,12 @@ npm install expo-linear-gradient react-native-svg
 EXPO_PUBLIC_FIREBASE_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXX
 EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=gatherlah-xxxxx.firebaseapp.com
 EXPO_PUBLIC_FIREBASE_PROJECT_ID=gatherlah-xxxxx
-EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=gatherlah-xxxxx.appspot.com
 EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789012
 EXPO_PUBLIC_FIREBASE_APP_ID=1:123456789012:web:abcdef1234567890
 ```
 
 **Important:**
+
 - ✅ Use `EXPO_PUBLIC_` prefix for all Firebase env variables
 - ✅ Never commit `.env` file to Git (already in `.gitignore`)
 
@@ -98,11 +100,11 @@ Create a test file to verify Firebase is working:
 
 ```typescript
 // Test in any screen or create a test file
-import { db, auth } from '@/services/firebase/config';
+import { db, auth } from "@/services/firebase/config";
 
 // Test Firestore connection
-console.log('Firebase initialized:', db ? 'Yes' : 'No');
-console.log('Auth initialized:', auth ? 'Yes' : 'No');
+console.log("Firebase initialized:", db ? "Yes" : "No");
+console.log("Auth initialized:", auth ? "Yes" : "No");
 ```
 
 ---
@@ -271,48 +273,9 @@ service cloud.firestore {
 
 ## Step 8: Set Up Storage Rules
 
-1. Go to **Storage → Rules**
-2. Replace with these rules:
+~~Set Up Storage Rules~~ (Skipped - Optional)
 
-```javascript
-rules_version = '2';
-service firebase.storage {
-  match /b/{bucket}/o {
-    // Helper functions
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    // User avatars
-    match /avatars/{userId}/{fileName} {
-      allow read: if true; // Public read
-      allow write: if isSignedIn() && request.auth.uid == userId;
-    }
-
-    // Event images
-    match /events/{eventId}/{fileName} {
-      allow read: if true; // Public read
-      allow write: if isSignedIn();
-    }
-
-    // Competition entries
-    match /entries/{entryId}/{fileName} {
-      allow read: if true; // Public read
-      allow write: if isSignedIn();
-    }
-
-    // Post images
-    match /posts/{postId}/{fileName} {
-      allow read: if true; // Public read
-      allow write: if isSignedIn();
-    }
-  }
-}
-```
-
-3. Click **"Publish"**
-
----
+## Storage is disabled by default to avoid costs. Once you enable it in Firebase and add file uploads to your code, deploy these rules.
 
 ## Step 9: Initialize Sample Data (Optional)
 
@@ -320,13 +283,13 @@ You can run a script to populate initial badges and missions:
 
 ```typescript
 // Create a script: scripts/initializeData.ts
-import { collection, addDoc } from 'firebase/firestore';
-import { db, COLLECTIONS } from '@/services/firebase/config';
-import { INITIAL_BADGES } from '@/services/data/initial-badges';
-import { INITIAL_MISSIONS } from '@/services/data/initial-missions';
+import { collection, addDoc } from "firebase/firestore";
+import { db, COLLECTIONS } from "@/services/firebase/config";
+import { INITIAL_BADGES } from "@/services/data/initial-badges";
+import { INITIAL_MISSIONS } from "@/services/data/initial-missions";
 
 async function initializeData() {
-  console.log('Initializing badges...');
+  console.log("Initializing badges...");
   for (const badge of INITIAL_BADGES) {
     await addDoc(collection(db, COLLECTIONS.BADGES), {
       ...badge,
@@ -334,7 +297,7 @@ async function initializeData() {
     });
   }
 
-  console.log('Initializing missions...');
+  console.log("Initializing missions...");
   for (const mission of INITIAL_MISSIONS) {
     await addDoc(collection(db, COLLECTIONS.MISSIONS), {
       ...mission,
@@ -342,7 +305,7 @@ async function initializeData() {
     });
   }
 
-  console.log('Data initialized successfully!');
+  console.log("Data initialized successfully!");
 }
 
 // Run this once
@@ -356,20 +319,20 @@ initializeData();
 Try signing up a user:
 
 ```typescript
-import { AuthService } from '@/services';
+import { AuthService } from "@/services";
 
 // Test signup
 try {
   const user = await AuthService.signUp(
-    'test@example.com',
-    'password123',
-    'testuser',
-    'Test User',
-    AccountType.NORMAL
+    "test@example.com",
+    "password123",
+    "testuser",
+    "Test User",
+    AccountType.NORMAL,
   );
-  console.log('User created:', user);
+  console.log("User created:", user);
 } catch (error) {
-  console.error('Error:', error);
+  console.error("Error:", error);
 }
 ```
 
@@ -380,6 +343,7 @@ try {
 Your Firebase backend is now configured and ready to use with GatherLah!
 
 ### Next Steps:
+
 1. ✅ Test authentication (sign up, login)
 2. ✅ Create some test events
 3. ✅ Test friend requests
@@ -387,6 +351,7 @@ Your Firebase backend is now configured and ready to use with GatherLah!
 5. ✅ Award some badges
 
 ### Useful Commands:
+
 ```bash
 # Start the app
 npm start
@@ -399,6 +364,7 @@ npm start -- --clear
 ```
 
 ### Need Help?
+
 - Firebase Docs: https://firebase.google.com/docs
 - Expo Docs: https://docs.expo.dev
 - GatherLah Backend README: See `services/README.md`
