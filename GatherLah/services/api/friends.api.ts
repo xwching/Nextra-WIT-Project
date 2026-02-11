@@ -57,21 +57,21 @@ export class FriendsAPI {
       // Check receiver's privacy settings
       const receiverDoc = await getDoc(doc(db, COLLECTIONS.USERS, receiverId));
       const receiverData = receiverDoc.data() as User;
-      if (receiverData.privacySettings.allowFriendRequests === 'none') {
+      if (receiverData?.privacySettings?.allowFriendRequests === 'none') {
         throw new Error('This user is not accepting friend requests');
       }
 
       const requestId = doc(collection(db, COLLECTIONS.FRIEND_REQUESTS)).id;
 
-      const request: FriendRequest = {
+      const request: Record<string, any> = {
         id: requestId,
         senderId: senderId,
         receiverId: receiverId,
         status: FriendRequestStatus.PENDING,
-        message: message,
-        context: context,
         createdAt: new Date(),
       };
+      if (message) request.message = message;
+      if (context) request.context = context;
 
       await setDoc(doc(db, COLLECTIONS.FRIEND_REQUESTS, requestId), {
         ...request,
@@ -81,7 +81,7 @@ export class FriendsAPI {
       // Create notification
       // TODO: Call notifications service
 
-      return request;
+      return request as unknown as FriendRequest;
     } catch (error: any) {
       console.error('Send friend request error:', error);
       throw new Error(error.message || 'Failed to send friend request');
@@ -264,34 +264,140 @@ export class FriendsAPI {
   }
 
   /**
+   * Get sent (outgoing) pending friend requests
+   */
+  static async getSentRequests(userId: string): Promise<(FriendRequest & { receiverUser?: User })[]> {
+    try {
+      const sentQuery = query(
+        collection(db, COLLECTIONS.FRIEND_REQUESTS),
+        where('senderId', '==', userId),
+        where('status', '==', FriendRequestStatus.PENDING)
+      );
+      const snap = await getDocs(sentQuery);
+      const results: (FriendRequest & { receiverUser?: User })[] = [];
+      for (const d of snap.docs) {
+        const req = { id: d.id, ...d.data() } as FriendRequest;
+        const receiverDoc = await getDoc(doc(db, COLLECTIONS.USERS, req.receiverId));
+        if (receiverDoc.exists()) {
+          results.push({ ...req, receiverUser: { id: receiverDoc.id, ...receiverDoc.data() } as User });
+        } else {
+          results.push(req);
+        }
+      }
+      return results;
+    } catch (error: any) {
+      console.error('Get sent requests error:', error);
+      throw new Error(error.message || 'Failed to get sent requests');
+    }
+  }
+
+  /**
+   * Cancel a sent friend request
+   */
+  static async cancelFriendRequest(requestId: string): Promise<void> {
+    try {
+      await deleteDoc(doc(db, COLLECTIONS.FRIEND_REQUESTS, requestId));
+    } catch (error: any) {
+      console.error('Cancel friend request error:', error);
+      throw new Error(error.message || 'Failed to cancel friend request');
+    }
+  }
+
+  /**
    * Get friend suggestions based on mutual friends and shared interests
    */
-  static async getFriendSuggestions(userId: string, limitCount: number = 10): Promise<User[]> {
+  static async getFriendSuggestions(userId: string, limitCount: number = 10): Promise<(User & { mutualCount?: number; sharedInterests?: string[] })[]> {
     try {
       // Get user's current friends
-      const friendsQuery = query(collection(db, `${COLLECTIONS.USERS}/${userId}/friends`));
-      const friendsDocs = await getDocs(friendsQuery);
-      const friendIds = friendsDocs.docs.map(doc => {
-        const friendship = doc.data() as Friendship;
+      const friendsSnap = await getDocs(collection(db, `${COLLECTIONS.USERS}/${userId}/friends`));
+      const friendIds = friendsSnap.docs.map(d => {
+        const friendship = d.data() as Friendship;
         return friendship.userId1 === userId ? friendship.userId2 : friendship.userId1;
       });
+
+      // Get pending request user IDs (both sent and received) to exclude
+      const sentQuery = query(
+        collection(db, COLLECTIONS.FRIEND_REQUESTS),
+        where('senderId', '==', userId),
+        where('status', '==', FriendRequestStatus.PENDING)
+      );
+      const receivedQuery = query(
+        collection(db, COLLECTIONS.FRIEND_REQUESTS),
+        where('receiverId', '==', userId),
+        where('status', '==', FriendRequestStatus.PENDING)
+      );
+      const [sentSnap, receivedSnap] = await Promise.all([getDocs(sentQuery), getDocs(receivedQuery)]);
+      const pendingIds = new Set<string>();
+      sentSnap.docs.forEach(d => pendingIds.add(d.data().receiverId));
+      receivedSnap.docs.forEach(d => pendingIds.add(d.data().senderId));
+
+      const excludeIds = new Set([userId, ...friendIds, ...pendingIds]);
 
       // Get user data for interests
       const userDoc = await getDoc(doc(db, COLLECTIONS.USERS, userId));
       const userData = userDoc.data() as User;
+      const userInterests = userData?.interests || [];
 
-      // Find users with similar interests (not friends yet)
-      const suggestionsQuery = query(
-        collection(db, COLLECTIONS.USERS),
-        where('interests', 'array-contains-any', userData.interests.slice(0, 10)),
-        limit(limitCount * 2)
-      );
-      const suggestionsDocs = await getDocs(suggestionsQuery);
+      let candidateDocs: any[] = [];
 
-      const suggestions = suggestionsDocs.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as User))
-        .filter(user => user.id !== userId && !friendIds.includes(user.id))
-        .slice(0, limitCount);
+      // If user has interests, find users with shared interests
+      if (userInterests.length > 0) {
+        const suggestionsQuery = query(
+          collection(db, COLLECTIONS.USERS),
+          where('interests', 'array-contains-any', userInterests.slice(0, 10)),
+          limit(limitCount * 3)
+        );
+        const snap = await getDocs(suggestionsQuery);
+        candidateDocs = snap.docs;
+      }
+
+      // Fallback: if not enough results, fetch recent users
+      if (candidateDocs.length < limitCount) {
+        const fallbackQuery = query(
+          collection(db, COLLECTIONS.USERS),
+          orderBy('createdAt', 'desc'),
+          limit(limitCount * 3)
+        );
+        const fallbackSnap = await getDocs(fallbackQuery);
+        const existingIds = new Set(candidateDocs.map((d: any) => d.id));
+        for (const d of fallbackSnap.docs) {
+          if (!existingIds.has(d.id)) {
+            candidateDocs.push(d);
+          }
+        }
+      }
+
+      // Build suggestions with mutual friend count and shared interests
+      const suggestions: (User & { mutualCount?: number; sharedInterests?: string[] })[] = [];
+
+      for (const d of candidateDocs) {
+        if (excludeIds.has(d.id)) continue;
+        if (suggestions.length >= limitCount) break;
+
+        const u = { id: d.id, ...d.data() } as User;
+
+        // Calculate shared interests
+        const shared = (u.interests || []).filter((i: string) => userInterests.includes(i));
+
+        // Count mutual friends
+        let mutualCount = 0;
+        if (friendIds.length > 0) {
+          const theirFriendsSnap = await getDocs(collection(db, `${COLLECTIONS.USERS}/${u.id}/friends`));
+          const theirFriendIds = theirFriendsSnap.docs.map(fd => {
+            const f = fd.data() as Friendship;
+            return f.userId1 === u.id ? f.userId2 : f.userId1;
+          });
+          mutualCount = theirFriendIds.filter(id => friendIds.includes(id)).length;
+        }
+
+        suggestions.push({ ...u, mutualCount, sharedInterests: shared });
+      }
+
+      // Sort: mutual friends first, then shared interests count
+      suggestions.sort((a, b) => {
+        if ((b.mutualCount || 0) !== (a.mutualCount || 0)) return (b.mutualCount || 0) - (a.mutualCount || 0);
+        return (b.sharedInterests?.length || 0) - (a.sharedInterests?.length || 0);
+      });
 
       return suggestions;
     } catch (error: any) {

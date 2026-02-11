@@ -1,21 +1,65 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  TextInput,
   Animated,
   Pressable,
+  ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { collection, getDocs, getDoc, doc, query, where, orderBy, limit } from 'firebase/firestore';
 import { EventCard } from '@/components/ui/event-card';
-import { CustomBadge } from '@/components/ui/custom-badge';
-import { currentUser, mockEvents, mockUsers } from '@/constants/mockData';
+import { useAuth } from '@/contexts/AuthContext';
+import { EventsAPI } from '@/services/api/events.api';
+import { db, COLLECTIONS } from '@/services/firebase/config';
+import { Event as FirebaseEvent, EventStatus } from '@/types/event.types';
+import { Event as MockEvent } from '@/constants/mockData';
+import { User } from '@/types/user.types';
+import { Friendship } from '@/types/social.types';
 import { AppColors } from '@/constants/colors';
+
+// Helper to convert Firestore Timestamp or Date to JS Date
+function toJSDate(val: any): Date {
+  if (val instanceof Date) return val;
+  if (val && typeof val.toDate === 'function') return val.toDate();
+  return new Date(val);
+}
+
+// Convert Firebase event to the mock Event shape that EventCard expects
+function toCardEvent(e: FirebaseEvent): MockEvent {
+  const startTime = toJSDate(e.startTime);
+  return {
+    id: e.id,
+    title: e.title,
+    description: e.description,
+    type: e.type as MockEvent['type'],
+    intensity: 'medium',
+    duration: 'medium',
+    host: {
+      id: e.creatorId,
+      username: 'host',
+      name: 'Event Host',
+      avatar: '🎉',
+      bio: '',
+      isOnline: true,
+      energyLevel: 'high',
+      interests: [],
+      joinedDate: '',
+    },
+    startTime: startTime.toISOString(),
+    participants: e.currentParticipants,
+    maxParticipants: e.maxParticipants ?? 999,
+    friendsAttending: [],
+    tags: e.tags || [],
+    isLive: e.isLive,
+    location: e.location === 'online' ? 'virtual' : e.location === 'in-person' ? 'nearby' : 'anywhere',
+  };
+}
 
 // Animated Stat Card Component
 function AnimatedStatCard({ icon, iconColor, value, label, colors }: any) {
@@ -63,26 +107,103 @@ function AnimatedStatCard({ icon, iconColor, value, label, colors }: any) {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { user } = useAuth();
 
-  // Get upcoming events (next 3)
-  const upcomingEvents = mockEvents.filter(e => !e.isLive).slice(0, 3);
-  const liveEvents = mockEvents.filter(e => e.isLive);
+  const [events, setEvents] = useState<FirebaseEvent[]>([]);
+  const [friends, setFriends] = useState<User[]>([]);
+  const [friendsCount, setFriendsCount] = useState(0);
+  const [eventsThisWeek, setEventsThisWeek] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [pendingRequestCount, setPendingRequestCount] = useState(0);
 
-  // Friend activity data
-  const friendActivity = [
-    { user: mockUsers[0], action: 'joined Book Club', time: '2 hours ago' },
-    { user: mockUsers[1], action: 'earned "Conversation Catalyst" badge', time: '3 hours ago' },
-    { user: mockUsers[2], action: 'is hosting Drawing Challenge tomorrow', time: '5 hours ago' },
-  ];
+  const fetchHomeData = async () => {
+    if (!user?.id) return;
+    setLoading(true);
+    try {
+      // Fetch events
+      const fetchedEvents = await EventsAPI.getEvents({});
+      setEvents(fetchedEvents);
 
-  // Question of the day
-  const qotd = {
-    question: "What's your favorite way to unwind after a busy day?",
-    answers: [
-      { user: mockUsers[0], answer: "Coffee and a good book!", likes: 12 },
-      { user: mockUsers[2], answer: "Drawing or any creative activity", likes: 8 },
-    ],
+      // Count events this week
+      const now = new Date();
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(now.getDate() - now.getDay());
+      startOfWeek.setHours(0, 0, 0, 0);
+      const weekEvents = fetchedEvents.filter(e => {
+        const start = toJSDate(e.startTime);
+        return start >= startOfWeek && start <= now;
+      });
+      setEventsThisWeek(weekEvents.length);
+
+      // Fetch friends from subcollection
+      try {
+        const friendsSnap = await getDocs(collection(db, `${COLLECTIONS.USERS}/${user.id}/friends`));
+        const friendships = friendsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Friendship));
+        setFriendsCount(friendships.length);
+
+        // Get first 5 friend profiles for the activity section
+        const friendProfiles: User[] = [];
+        for (const f of friendships.slice(0, 5)) {
+          const friendId = f.userId1 === user.id ? f.userId2 : f.userId1;
+          const userDoc = await getDoc(doc(db, COLLECTIONS.USERS, friendId));
+          if (userDoc.exists()) {
+            friendProfiles.push({ id: userDoc.id, ...userDoc.data() } as User);
+          }
+        }
+        setFriends(friendProfiles);
+      } catch (err) {
+        console.error('Fetch friends error:', err);
+        setFriendsCount(user.friendsCount || 0);
+      }
+
+      // Fetch pending friend request count
+      try {
+        const requestsQuery = query(
+          collection(db, COLLECTIONS.FRIEND_REQUESTS),
+          where('receiverId', '==', user.id),
+          where('status', '==', 'pending')
+        );
+        const requestsSnap = await getDocs(requestsQuery);
+        setPendingRequestCount(requestsSnap.size);
+      } catch (err) {
+        console.error('Fetch requests error:', err);
+      }
+    } catch (err) {
+      console.error('Home data error:', err);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  useEffect(() => {
+    fetchHomeData();
+  }, [user?.id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchHomeData();
+    }, [user?.id])
+  );
+
+  const now = new Date();
+  const liveEvents = events.filter(e => e.isLive);
+  const upcomingEvents = events
+    .filter(e => {
+      const start = toJSDate(e.startTime);
+      return !e.isLive && start > now && e.status === EventStatus.UPCOMING;
+    })
+    .slice(0, 3);
+
+  const displayName = user?.displayName || user?.username || 'there';
+  const streak = user?.currentStreak || 0;
+
+  if (loading && !events.length) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={AppColors.primary.main} />
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
@@ -96,27 +217,34 @@ export default function HomeScreen() {
         <View style={styles.headerTop}>
           <View style={styles.userInfo}>
             <Text style={styles.greeting}>Welcome back,</Text>
-            <Text style={styles.userName}>{currentUser.name}! 👋</Text>
+            <Text style={styles.userName}>{displayName}!</Text>
           </View>
-          <TouchableOpacity style={styles.notificationButton}>
+          <TouchableOpacity
+            style={styles.notificationButton}
+            onPress={() => router.push('/friends' as any)}
+          >
             <MaterialCommunityIcons name="bell-outline" size={24} color="white" />
-            <View style={styles.notificationBadge}>
-              <Text style={styles.notificationBadgeText}>3</Text>
-            </View>
+            {pendingRequestCount > 0 && (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationBadgeText}>{pendingRequestCount}</Text>
+              </View>
+            )}
           </TouchableOpacity>
         </View>
 
-        {/* Energy & Mood */}
+        {/* User Level & XP */}
         <View style={styles.statusBar}>
           <View style={styles.statusBadge}>
-            <Text style={styles.statusBadgeText}>● Online</Text>
+            <Text style={styles.statusBadgeText}>Level {user?.level || 1}</Text>
           </View>
           <View style={styles.statusBadge}>
-            <Text style={styles.statusBadgeText}>{currentUser.mood} Feeling great</Text>
+            <Text style={styles.statusBadgeText}>{user?.experiencePoints || 0} XP</Text>
           </View>
-          <View style={styles.statusBadge}>
-            <Text style={styles.statusBadgeText}>⚡ {currentUser.energyLevel} energy</Text>
-          </View>
+          {streak > 0 && (
+            <View style={styles.statusBadge}>
+              <Text style={styles.statusBadgeText}>🔥 {streak} day streak</Text>
+            </View>
+          )}
         </View>
       </LinearGradient>
 
@@ -125,21 +253,21 @@ export default function HomeScreen() {
         <AnimatedStatCard
           icon="fire"
           iconColor="#F59E0B"
-          value="7"
+          value={streak}
           label="Day Streak"
           colors={['#FEF3C7', '#FDE68A']}
         />
         <AnimatedStatCard
           icon="calendar-check"
           iconColor="#2563EB"
-          value="5"
+          value={eventsThisWeek}
           label="This Week"
           colors={['#DBEAFE', '#BFDBFE']}
         />
         <AnimatedStatCard
           icon="account-group"
           iconColor="#8B5CF6"
-          value="47"
+          value={friendsCount}
           label="Friends"
           colors={['#F3E8FF', '#E9D5FF']}
         />
@@ -156,7 +284,7 @@ export default function HomeScreen() {
             <Text style={styles.liveCount}>{liveEvents.length} event{liveEvents.length > 1 ? 's' : ''}</Text>
           </View>
           <EventCard
-            event={liveEvents[0]}
+            event={toCardEvent(liveEvents[0])}
             onPress={() => router.push(`/event/${liveEvents[0].id}` as any)}
           />
         </View>
@@ -170,78 +298,91 @@ export default function HomeScreen() {
             <Text style={styles.seeAllLink}>See All</Text>
           </TouchableOpacity>
         </View>
-        {upcomingEvents.map(event => (
-          <EventCard
-            key={event.id}
-            event={event}
-            onPress={() => router.push(`/event/${event.id}` as any)}
-          />
-        ))}
+        {upcomingEvents.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <MaterialCommunityIcons name="calendar-blank" size={36} color="#9CA3AF" />
+            <Text style={styles.emptyText}>No upcoming events</Text>
+            <TouchableOpacity
+              style={styles.createButton}
+              onPress={() => router.push('/create-event')}
+            >
+              <MaterialCommunityIcons name="plus" size={16} color="white" />
+              <Text style={styles.createButtonText}>Create Event</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          upcomingEvents.map(event => (
+            <EventCard
+              key={event.id}
+              event={toCardEvent(event)}
+              onPress={() => router.push(`/event/${event.id}` as any)}
+            />
+          ))
+        )}
       </View>
 
-      {/* Question of the Day */}
-      <View style={styles.qotdCard}>
-        <View style={styles.qotdHeader}>
-          <MaterialCommunityIcons name="comment-question" size={20} color="#2563EB" />
-          <Text style={styles.qotdTitle}>Question of the Day</Text>
-        </View>
-        <Text style={styles.qotdQuestion}>{qotd.question}</Text>
-
-        <View style={styles.qotdAnswers}>
-          {qotd.answers.map((answer, i) => (
-            <View key={i} style={styles.qotdAnswer}>
-              <View style={styles.qotdAnswerHeader}>
-                <Text style={styles.qotdAvatar}>{answer.user.avatar}</Text>
-                <Text style={styles.qotdUserName}>{answer.user.name}</Text>
-              </View>
-              <Text style={styles.qotdAnswerText}>{answer.answer}</Text>
-              <View style={styles.qotdLikes}>
-                <MaterialCommunityIcons name="heart" size={14} color="#EF4444" />
-                <Text style={styles.qotdLikesText}>{answer.likes}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.qotdInputContainer}>
-          <TextInput
-            style={styles.qotdInput}
-            placeholder="Share your answer..."
-            placeholderTextColor="#9CA3AF"
-          />
-          <TouchableOpacity style={styles.qotdSubmitButton}>
-            <MaterialCommunityIcons name="send" size={18} color="white" />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Friend Activity */}
+      {/* Friends Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Friend Activity</Text>
+          <Text style={styles.sectionTitle}>Your Friends</Text>
+          <TouchableOpacity onPress={() => router.push('/friends' as any)}>
+            <Text style={styles.seeAllLink}>See All</Text>
+          </TouchableOpacity>
         </View>
-        <View style={styles.activityCard}>
-          {friendActivity.map((activity, i) => (
-            <View
-              key={i}
-              style={[
-                styles.activityItem,
-                i < friendActivity.length - 1 && styles.activityItemBorder,
-              ]}
-            >
-              <Text style={styles.activityAvatar}>{activity.user.avatar}</Text>
-              <View style={styles.activityContent}>
-                <Text style={styles.activityText}>
-                  <Text style={styles.activityUserName}>{activity.user.name}</Text>
-                  {' '}
-                  {activity.action}
-                </Text>
-                <Text style={styles.activityTime}>{activity.time}</Text>
+        {friends.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <MaterialCommunityIcons name="account-group" size={36} color="#9CA3AF" />
+            <Text style={styles.emptyText}>No friends yet</Text>
+            <Text style={styles.emptySubtext}>
+              Search for users in the Friends tab to connect!
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.activityCard}>
+            {friends.map((friend, i) => (
+              <View
+                key={friend.id}
+                style={[
+                  styles.activityItem,
+                  i < friends.length - 1 && styles.activityItemBorder,
+                ]}
+              >
+                <Text style={styles.activityAvatar}>{friend.avatar || '👤'}</Text>
+                <View style={styles.activityContent}>
+                  <Text style={styles.activityUserName}>
+                    {friend.displayName || friend.username}
+                  </Text>
+                  <Text style={styles.activityTime}>
+                    @{friend.username}{friend.isOnline ? '  ● Online' : ''}
+                  </Text>
+                </View>
+                {friend.isOnline && (
+                  <View style={styles.onlineDot} />
+                )}
               </View>
-            </View>
-          ))}
-        </View>
+            ))}
+          </View>
+        )}
       </View>
+
+      {/* Recent Events Created by You */}
+      {events.filter(e => e.creatorId === user?.id).length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Your Events</Text>
+          </View>
+          {events
+            .filter(e => e.creatorId === user?.id)
+            .slice(0, 2)
+            .map(event => (
+              <EventCard
+                key={event.id}
+                event={toCardEvent(event)}
+                onPress={() => router.push(`/event/${event.id}` as any)}
+              />
+            ))}
+        </View>
+      )}
 
       {/* Bottom Spacing */}
       <View style={styles.bottomSpacing} />
@@ -393,93 +534,42 @@ const styles = StyleSheet.create({
     color: '#2563EB',
     fontWeight: '600',
   },
-  qotdCard: {
+  emptyCard: {
     backgroundColor: 'white',
-    marginHorizontal: 16,
-    marginBottom: 16,
-    padding: 16,
     borderRadius: 12,
+    padding: 24,
+    alignItems: 'center',
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
-  qotdHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  qotdTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  qotdQuestion: {
+  emptyText: {
     fontSize: 15,
-    color: '#374151',
-    marginBottom: 16,
-    lineHeight: 22,
+    color: '#6B7280',
+    marginTop: 8,
   },
-  qotdAnswers: {
-    gap: 12,
-    marginBottom: 16,
+  emptySubtext: {
+    fontSize: 13,
+    color: '#9CA3AF',
+    marginTop: 4,
+    textAlign: 'center',
   },
-  qotdAnswer: {
-    backgroundColor: '#F9FAFB',
-    padding: 12,
-    borderRadius: 8,
-  },
-  qotdAnswerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 6,
-  },
-  qotdAvatar: {
-    fontSize: 16,
-  },
-  qotdUserName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  qotdAnswerText: {
-    fontSize: 14,
-    color: '#374151',
-    marginBottom: 8,
-  },
-  qotdLikes: {
+  createButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-  },
-  qotdLikesText: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  qotdInputContainer: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  qotdInput: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 24,
-    fontSize: 14,
-    color: '#111827',
-  },
-  qotdSubmitButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
     backgroundColor: '#2563EB',
-    justifyContent: 'center',
-    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 12,
+  },
+  createButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
   },
   activityCard: {
     backgroundColor: 'white',
@@ -507,18 +597,21 @@ const styles = StyleSheet.create({
   activityContent: {
     flex: 1,
   },
-  activityText: {
-    fontSize: 14,
-    color: '#374151',
-    marginBottom: 2,
-  },
   activityUserName: {
     fontWeight: '600',
     color: '#111827',
+    fontSize: 14,
   },
   activityTime: {
     fontSize: 12,
     color: '#9CA3AF',
+    marginTop: 2,
+  },
+  onlineDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#10B981',
   },
   bottomSpacing: {
     height: 24,
