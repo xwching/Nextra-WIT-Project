@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,16 @@ import {
   ScrollView,
   TouchableOpacity,
   Pressable,
+  ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { EventCard } from '@/components/ui/event-card';
-import { CustomBadge } from '@/components/ui/custom-badge';
-import { mockEvents } from '@/constants/mockData';
+import { EventsAPI } from '@/services/api/events.api';
+import { auth } from '@/services/firebase/config';
+import { Event as FirebaseEvent, EventStatus } from '@/types/event.types';
+import { Event as MockEvent } from '@/constants/mockData';
 import { AppColors } from '@/constants/colors';
 
 const EVENT_TYPE_ICONS: Record<string, keyof typeof MaterialCommunityIcons.glyphMap> = {
@@ -25,18 +28,99 @@ const EVENT_TYPE_ICONS: Record<string, keyof typeof MaterialCommunityIcons.glyph
   community: 'heart',
 };
 
+// Helper to convert Firestore Timestamp or Date to JS Date
+function toJSDate(val: any): Date {
+  if (val instanceof Date) return val;
+  if (val && typeof val.toDate === 'function') return val.toDate(); // Firestore Timestamp
+  return new Date(val);
+}
+
+// Convert Firebase event to the mock Event shape that EventCard expects
+function toCardEvent(e: FirebaseEvent): MockEvent {
+  const startTime = toJSDate(e.startTime);
+  return {
+    id: e.id,
+    title: e.title,
+    description: e.description,
+    type: e.type as MockEvent['type'],
+    intensity: 'medium',
+    duration: 'medium',
+    host: {
+      id: e.creatorId,
+      username: 'host',
+      name: 'Event Host',
+      avatar: '🎉',
+      bio: '',
+      isOnline: true,
+      energyLevel: 'high',
+      interests: [],
+      joinedDate: '',
+    },
+    startTime: startTime.toISOString(),
+    participants: e.currentParticipants,
+    maxParticipants: e.maxParticipants ?? 999,
+    friendsAttending: [],
+    tags: e.tags || [],
+    isLive: e.isLive,
+    location: e.location === 'online' ? 'virtual' : e.location === 'in-person' ? 'nearby' : 'anywhere',
+  };
+}
+
 export default function EventsScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'happening' | 'upcoming' | 'past' | 'mine'>('upcoming');
   const [filterType, setFilterType] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [events, setEvents] = useState<FirebaseEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const fetchEvents = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const fetched = await EventsAPI.getEvents({});
+      setEvents(fetched);
+    } catch (err: any) {
+      console.error('Fetch events error:', err);
+      setError(err.message || 'Failed to load events');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch on mount
+  useEffect(() => {
+    fetchEvents();
+  }, []);
+
+  // Re-fetch when screen comes into focus (e.g. after creating an event)
+  useFocusEffect(
+    useCallback(() => {
+      fetchEvents();
+    }, [])
+  );
+
+  const now = new Date();
+  const userId = auth.currentUser?.uid;
 
   const filteredEvents = filterType === 'all'
-    ? mockEvents
-    : mockEvents.filter(e => e.type === filterType);
+    ? events
+    : events.filter(e => e.type === filterType);
 
-  const upcomingEvents = filteredEvents.filter(e => !e.isLive);
+  const upcomingEvents = filteredEvents.filter(e => {
+    const start = toJSDate(e.startTime);
+    return !e.isLive && start > now && e.status === EventStatus.UPCOMING;
+  });
+
   const happeningNow = filteredEvents.filter(e => e.isLive);
+
+  const pastEvents = filteredEvents.filter(e => {
+    const end = toJSDate(e.endTime);
+    return end < now || e.status === EventStatus.ENDED;
+  });
+
+  const myEvents = filteredEvents.filter(e => e.creatorId === userId);
 
   const renderEmptyState = (message: string, subtitle?: string) => (
     <View style={styles.emptyState}>
@@ -57,7 +141,7 @@ export default function EventsScreen() {
       >
         <View style={styles.headerTop}>
           <Text style={styles.title}>Events</Text>
-          <TouchableOpacity style={styles.createButton}>
+          <TouchableOpacity style={styles.createButton} onPress={() => router.push('/create-event')}>
             <MaterialCommunityIcons name="plus" size={20} color={AppColors.primary.main} />
             <Text style={styles.createButtonText}>Create</Text>
           </TouchableOpacity>
@@ -141,43 +225,102 @@ export default function EventsScreen() {
         contentContainerStyle={styles.contentContainer}
         showsVerticalScrollIndicator={false}
       >
-        {activeTab === 'happening' && (
-          <>
-            {happeningNow.length === 0
-              ? renderEmptyState('No events happening right now', 'Check back soon!')
-              : happeningNow.map(event => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    onPress={() => router.push(`/event/${event.id}` as any)}
-                  />
-                ))}
-          </>
-        )}
-
-        {activeTab === 'upcoming' && (
-          <>
-            {upcomingEvents.map(event => (
-              <EventCard
-                key={event.id}
-                event={event}
-                onPress={() => router.push(`/event/${event.id}` as any)}
-              />
-            ))}
-          </>
-        )}
-
-        {activeTab === 'past' && renderEmptyState('Your past events will appear here')}
-
-        {activeTab === 'mine' && (
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={AppColors.primary.main} />
+            <Text style={styles.loadingText}>Loading events...</Text>
+          </View>
+        ) : error ? (
           <View style={styles.emptyState}>
-            <MaterialCommunityIcons name="calendar-blank" size={48} color="#9CA3AF" />
-            <Text style={styles.emptyText}>Events you're hosting will appear here</Text>
-            <TouchableOpacity style={styles.createEventButton}>
-              <MaterialCommunityIcons name="plus" size={16} color="white" />
-              <Text style={styles.createEventButtonText}>Create Your First Event</Text>
+            <MaterialCommunityIcons name="alert-circle-outline" size={48} color="#EF4444" />
+            <Text style={styles.emptyText}>{error}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={fetchEvents}>
+              <Text style={styles.retryButtonText}>Retry</Text>
             </TouchableOpacity>
           </View>
+        ) : (
+          <>
+            {activeTab === 'happening' && (
+              <>
+                {happeningNow.length === 0
+                  ? renderEmptyState('No events happening right now', 'Check back soon!')
+                  : happeningNow.map(event => (
+                      <EventCard
+                        key={event.id}
+                        event={toCardEvent(event)}
+                        onPress={() => router.push(`/event/${event.id}` as any)}
+                      />
+                    ))}
+              </>
+            )}
+
+            {activeTab === 'upcoming' && (
+              <>
+                {upcomingEvents.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <MaterialCommunityIcons name="calendar-blank" size={48} color="#9CA3AF" />
+                    <Text style={styles.emptyText}>No upcoming events yet</Text>
+                    <Text style={styles.emptySubtext}>Create one to get started!</Text>
+                    <TouchableOpacity
+                      style={styles.createEventButton}
+                      onPress={() => router.push('/create-event')}
+                    >
+                      <MaterialCommunityIcons name="plus" size={16} color="white" />
+                      <Text style={styles.createEventButtonText}>Create Event</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  upcomingEvents.map(event => (
+                    <EventCard
+                      key={event.id}
+                      event={toCardEvent(event)}
+                      onPress={() => router.push(`/event/${event.id}` as any)}
+                    />
+                  ))
+                )}
+              </>
+            )}
+
+            {activeTab === 'past' && (
+              <>
+                {pastEvents.length === 0
+                  ? renderEmptyState('No past events yet')
+                  : pastEvents.map(event => (
+                      <EventCard
+                        key={event.id}
+                        event={toCardEvent(event)}
+                        onPress={() => router.push(`/event/${event.id}` as any)}
+                      />
+                    ))}
+              </>
+            )}
+
+            {activeTab === 'mine' && (
+              <>
+                {myEvents.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <MaterialCommunityIcons name="calendar-blank" size={48} color="#9CA3AF" />
+                    <Text style={styles.emptyText}>Events you're hosting will appear here</Text>
+                    <TouchableOpacity
+                      style={styles.createEventButton}
+                      onPress={() => router.push('/create-event')}
+                    >
+                      <MaterialCommunityIcons name="plus" size={16} color="white" />
+                      <Text style={styles.createEventButtonText}>Create Your First Event</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  myEvents.map(event => (
+                    <EventCard
+                      key={event.id}
+                      event={toCardEvent(event)}
+                      onPress={() => router.push(`/event/${event.id}` as any)}
+                    />
+                  ))
+                )}
+              </>
+            )}
+          </>
         )}
       </ScrollView>
     </View>
@@ -322,6 +465,16 @@ const styles = StyleSheet.create({
   contentContainer: {
     padding: 16,
   },
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6B7280',
+  },
   emptyState: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -338,6 +491,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#9CA3AF',
     marginTop: 4,
+  },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    backgroundColor: AppColors.primary.main,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
   },
   createEventButton: {
     flexDirection: 'row',

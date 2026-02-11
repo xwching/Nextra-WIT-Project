@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,40 +6,213 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { collection, query, where, getDocs, getDoc, doc, orderBy, limit as fbLimit } from 'firebase/firestore';
 import { CustomBadge } from '@/components/ui/custom-badge';
-import { mockUsers, friendRequests } from '@/constants/mockData';
+import { FriendsAPI } from '@/services/api/friends.api';
+import { auth, db, COLLECTIONS } from '@/services/firebase/config';
+import { User } from '@/types/user.types';
+import { FriendRequest, FriendRequestStatus, Friendship } from '@/types/social.types';
 import { AppColors } from '@/constants/colors';
 
-type FriendFilter = 'all' | 'online' | 'close';
+type FriendFilter = 'all' | 'online';
+
+// Helper to convert Firestore Timestamp to Date
+function toJSDate(val: any): Date {
+  if (val instanceof Date) return val;
+  if (val && typeof val.toDate === 'function') return val.toDate();
+  return new Date(val);
+}
 
 export default function FriendsScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<FriendFilter>('all');
+  const [friends, setFriends] = useState<User[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<(FriendRequest & { senderUser?: User })[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  // Separate friends based on whether they're actually friends
-  const friends = mockUsers.filter(u => u.isFriend);
-  const suggestions = mockUsers.filter(u => !u.isFriend).slice(0, 3);
+  // Search for users to add as friends
+  const [searchResults, setSearchResults] = useState<User[]>([]);
+  const [searching, setSearching] = useState(false);
 
-  // Filter friends based on active filter and search
+  const userId = auth.currentUser?.uid;
+
+  const fetchFriendsData = async () => {
+    if (!userId) return;
+    setLoading(true);
+    try {
+      // Fetch friends from subcollection
+      const friendsSnap = await getDocs(collection(db, `${COLLECTIONS.USERS}/${userId}/friends`));
+      const friendships = friendsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Friendship));
+
+      // Get friend user profiles
+      const friendProfiles: User[] = [];
+      for (const f of friendships) {
+        const friendId = f.userId1 === userId ? f.userId2 : f.userId1;
+        const userDoc = await getDoc(doc(db, COLLECTIONS.USERS, friendId));
+        if (userDoc.exists()) {
+          friendProfiles.push({ id: userDoc.id, ...userDoc.data() } as User);
+        }
+      }
+      setFriends(friendProfiles);
+
+      // Fetch pending friend requests received by this user
+      const requestsQuery = query(
+        collection(db, COLLECTIONS.FRIEND_REQUESTS),
+        where('receiverId', '==', userId),
+        where('status', '==', FriendRequestStatus.PENDING)
+      );
+      const requestsSnap = await getDocs(requestsQuery);
+      const requests: (FriendRequest & { senderUser?: User })[] = [];
+      for (const d of requestsSnap.docs) {
+        const req = { id: d.id, ...d.data() } as FriendRequest;
+        // Fetch sender's profile
+        const senderDoc = await getDoc(doc(db, COLLECTIONS.USERS, req.senderId));
+        if (senderDoc.exists()) {
+          requests.push({ ...req, senderUser: { id: senderDoc.id, ...senderDoc.data() } as User });
+        } else {
+          requests.push(req);
+        }
+      }
+      setPendingRequests(requests);
+    } catch (err: any) {
+      console.error('Fetch friends error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchFriendsData();
+  }, [userId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchFriendsData();
+    }, [userId])
+  );
+
+  // Search users by username or display name
+  const handleSearch = async (text: string) => {
+    setSearchQuery(text);
+    if (text.trim().length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    setSearching(true);
+    try {
+      // Search by username (prefix match)
+      const usernameQuery = query(
+        collection(db, COLLECTIONS.USERS),
+        where('username', '>=', text.toLowerCase()),
+        where('username', '<=', text.toLowerCase() + '\uf8ff'),
+        fbLimit(10)
+      );
+      const snap = await getDocs(usernameQuery);
+      const results = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as User))
+        .filter(u => u.id !== userId && !friends.some(f => f.id === u.id));
+      setSearchResults(results);
+    } catch (err) {
+      console.error('Search error:', err);
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleAcceptRequest = async (requestId: string) => {
+    setActionLoading(requestId);
+    try {
+      await FriendsAPI.acceptFriendRequest(requestId);
+      await fetchFriendsData();
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRejectRequest = async (requestId: string) => {
+    setActionLoading(requestId);
+    try {
+      await FriendsAPI.rejectFriendRequest(requestId);
+      setPendingRequests(prev => prev.filter(r => r.id !== requestId));
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleSendRequest = async (receiverId: string) => {
+    if (!userId) return;
+    setActionLoading(receiverId);
+    try {
+      await FriendsAPI.sendFriendRequest(userId, receiverId);
+      Alert.alert('Sent!', 'Friend request sent.');
+      setSearchResults(prev => prev.filter(u => u.id !== receiverId));
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRemoveFriend = async (friendId: string) => {
+    if (!userId) return;
+    Alert.alert('Remove Friend', 'Are you sure?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          setActionLoading(friendId);
+          try {
+            await FriendsAPI.removeFriend(userId, friendId);
+            setFriends(prev => prev.filter(f => f.id !== friendId));
+          } catch (err: any) {
+            Alert.alert('Error', err.message);
+          } finally {
+            setActionLoading(null);
+          }
+        },
+      },
+    ]);
+  };
+
+  // Filter friends
   const filteredFriends = friends.filter(friend => {
-    const matchesSearch = searchQuery === '' ||
-      friend.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      friend.username.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = searchQuery.length < 2 || // only filter when actively searching
+      friend.displayName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      friend.username?.toLowerCase().includes(searchQuery.toLowerCase());
 
     const matchesFilter =
       activeFilter === 'all' ||
-      (activeFilter === 'online' && friend.isOnline) ||
-      (activeFilter === 'close' && friend.isCloseFriend);
+      (activeFilter === 'online' && friend.isOnline);
 
     return matchesSearch && matchesFilter;
   });
 
+  const onlineCount = friends.filter(f => f.isOnline).length;
+
+  if (loading) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={AppColors.accent.main} />
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      {/* Header with Gradient */}
+      {/* Header */}
       <LinearGradient
         colors={AppColors.gradients.green}
         start={{ x: 0, y: 0 }}
@@ -50,39 +223,54 @@ export default function FriendsScreen() {
         <View style={styles.headerStats}>
           <Text style={styles.statsText}>{friends.length} friends</Text>
           <View style={styles.dot} />
-          <Text style={styles.statsText}>
-            {friends.filter(f => f.isOnline).length} online
-          </Text>
+          <Text style={styles.statsText}>{onlineCount} online</Text>
         </View>
       </LinearGradient>
 
       {/* Friend Requests */}
-      {friendRequests.length > 0 && (
+      {pendingRequests.length > 0 && (
         <View style={styles.requestsSection}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Friend Requests</Text>
             <CustomBadge variant="error" size="sm">
-              {friendRequests.length}
+              {pendingRequests.length}
             </CustomBadge>
           </View>
-          {friendRequests.map(request => (
+          {pendingRequests.map(request => (
             <View key={request.id} style={styles.requestCard}>
               <View style={styles.requestInfo}>
-                <Text style={styles.requestAvatar}>{request.user.avatar}</Text>
+                <Text style={styles.requestAvatar}>
+                  {request.senderUser?.avatar || '👤'}
+                </Text>
                 <View style={styles.requestDetails}>
-                  <Text style={styles.requestName}>{request.user.name}</Text>
-                  <Text style={styles.requestUsername}>@{request.user.username}</Text>
+                  <Text style={styles.requestName}>
+                    {request.senderUser?.displayName || 'Unknown'}
+                  </Text>
+                  <Text style={styles.requestUsername}>
+                    @{request.senderUser?.username || '???'}
+                  </Text>
                   {request.context && (
                     <Text style={styles.requestContext}>{request.context}</Text>
                   )}
-                  <Text style={styles.requestTime}>{request.sentAt}</Text>
                 </View>
               </View>
               <View style={styles.requestActions}>
-                <TouchableOpacity style={styles.acceptButton}>
-                  <MaterialCommunityIcons name="check" size={20} color="white" />
+                <TouchableOpacity
+                  style={styles.acceptButton}
+                  onPress={() => handleAcceptRequest(request.id)}
+                  disabled={actionLoading === request.id}
+                >
+                  {actionLoading === request.id ? (
+                    <ActivityIndicator size="small" color="white" />
+                  ) : (
+                    <MaterialCommunityIcons name="check" size={20} color="white" />
+                  )}
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.declineButton}>
+                <TouchableOpacity
+                  style={styles.declineButton}
+                  onPress={() => handleRejectRequest(request.id)}
+                  disabled={actionLoading === request.id}
+                >
                   <MaterialCommunityIcons name="close" size={20} color="#6B7280" />
                 </TouchableOpacity>
               </View>
@@ -97,19 +285,18 @@ export default function FriendsScreen() {
           <MaterialCommunityIcons name="magnify" size={20} color="#9CA3AF" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search friends..."
+            placeholder="Search friends or find users..."
             placeholderTextColor="#9CA3AF"
             value={searchQuery}
-            onChangeText={setSearchQuery}
+            onChangeText={handleSearch}
           />
           {searchQuery !== '' && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
               <MaterialCommunityIcons name="close-circle" size={20} color="#9CA3AF" />
             </TouchableOpacity>
           )}
         </View>
 
-        {/* Filter Tabs */}
         <View style={styles.filterTabs}>
           <TouchableOpacity
             style={[styles.filterTab, activeFilter === 'all' && styles.filterTabActive]}
@@ -124,102 +311,97 @@ export default function FriendsScreen() {
             onPress={() => setActiveFilter('online')}
           >
             <Text style={[styles.filterTabText, activeFilter === 'online' && styles.filterTabTextActive]}>
-              Online ({friends.filter(f => f.isOnline).length})
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.filterTab, activeFilter === 'close' && styles.filterTabActive]}
-            onPress={() => setActiveFilter('close')}
-          >
-            <Text style={[styles.filterTabText, activeFilter === 'close' && styles.filterTabTextActive]}>
-              Close ({friends.filter(f => f.isCloseFriend).length})
+              Online ({onlineCount})
             </Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Friends List */}
-      <View style={styles.friendsSection}>
-        {filteredFriends.length === 0 ? (
-          <View style={styles.emptyState}>
-            <MaterialCommunityIcons name="account-group" size={48} color="#9CA3AF" />
-            <Text style={styles.emptyText}>No friends found</Text>
-            <Text style={styles.emptySubtext}>Try adjusting your search or filters</Text>
-          </View>
-        ) : (
-          filteredFriends.map(friend => (
-            <TouchableOpacity key={friend.id} style={styles.friendCard}>
-              <View style={styles.friendInfo}>
-                <View style={styles.friendAvatarContainer}>
-                  <Text style={styles.friendAvatar}>{friend.avatar}</Text>
-                  {friend.isOnline && <View style={styles.onlineIndicator} />}
-                </View>
-                <View style={styles.friendDetails}>
-                  <View style={styles.friendNameRow}>
-                    <Text style={styles.friendName}>{friend.name}</Text>
-                    {friend.isCloseFriend && (
-                      <MaterialCommunityIcons name="star" size={14} color="#F59E0B" />
-                    )}
-                  </View>
-                  <Text style={styles.friendUsername}>@{friend.username}</Text>
-                  {friend.currentActivity ? (
-                    <View style={styles.activityBadge}>
-                      <MaterialCommunityIcons name="circle" size={8} color="#10B981" />
-                      <Text style={styles.activityText}>{friend.currentActivity}</Text>
-                    </View>
-                  ) : friend.lastSeen ? (
-                    <Text style={styles.lastSeen}>Last seen {friend.lastSeen}</Text>
-                  ) : null}
-                  {friend.friendsSince && (
-                    <Text style={styles.friendsSince}>Friends for {friend.friendsSince}</Text>
-                  )}
-                </View>
-              </View>
-              <View style={styles.friendActions}>
-                <TouchableOpacity style={styles.messageButton}>
-                  <MaterialCommunityIcons name="message-text" size={20} color="#2563EB" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.moreButton}>
-                  <MaterialCommunityIcons name="dots-horizontal" size={20} color="#6B7280" />
-                </TouchableOpacity>
-              </View>
-            </TouchableOpacity>
-          ))
-        )}
-      </View>
-
-      {/* Suggestions */}
-      {!searchQuery && activeFilter === 'all' && suggestions.length > 0 && (
+      {/* Search Results (users to add) */}
+      {searchQuery.trim().length >= 2 && searchResults.length > 0 && (
         <View style={styles.suggestionsSection}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>People You May Know</Text>
+            <Text style={styles.sectionTitle}>Add Friends</Text>
           </View>
-          {suggestions.map(user => (
+          {searchResults.map(user => (
             <View key={user.id} style={styles.suggestionCard}>
               <View style={styles.suggestionInfo}>
-                <Text style={styles.suggestionAvatar}>{user.avatar}</Text>
+                <Text style={styles.suggestionAvatar}>{user.avatar || '👤'}</Text>
                 <View style={styles.suggestionDetails}>
-                  <Text style={styles.suggestionName}>{user.name}</Text>
+                  <Text style={styles.suggestionName}>{user.displayName}</Text>
                   <Text style={styles.suggestionUsername}>@{user.username}</Text>
-                  <Text style={styles.suggestionBio} numberOfLines={1}>
-                    {user.bio}
-                  </Text>
-                  {user.mutualFriends && (
-                    <Text style={styles.mutualFriends}>
-                      {user.mutualFriends} mutual friends
-                    </Text>
-                  )}
                 </View>
               </View>
-              <TouchableOpacity style={styles.addButton}>
-                <MaterialCommunityIcons name="account-plus" size={20} color="white" />
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={() => handleSendRequest(user.id)}
+                disabled={actionLoading === user.id}
+              >
+                {actionLoading === user.id ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <MaterialCommunityIcons name="account-plus" size={20} color="white" />
+                )}
               </TouchableOpacity>
             </View>
           ))}
         </View>
       )}
 
-      {/* Bottom Spacing */}
+      {searching && (
+        <View style={{ padding: 16, alignItems: 'center' }}>
+          <ActivityIndicator size="small" color={AppColors.accent.main} />
+        </View>
+      )}
+
+      {/* Friends List */}
+      <View style={styles.friendsSection}>
+        {filteredFriends.length === 0 ? (
+          <View style={styles.emptyState}>
+            <MaterialCommunityIcons name="account-group" size={48} color="#9CA3AF" />
+            <Text style={styles.emptyText}>
+              {friends.length === 0 ? 'No friends yet' : 'No friends found'}
+            </Text>
+            <Text style={styles.emptySubtext}>
+              {friends.length === 0
+                ? 'Search for users above to add friends'
+                : 'Try adjusting your search or filters'}
+            </Text>
+          </View>
+        ) : (
+          filteredFriends.map(friend => (
+            <TouchableOpacity key={friend.id} style={styles.friendCard}>
+              <View style={styles.friendInfo}>
+                <View style={styles.friendAvatarContainer}>
+                  <Text style={styles.friendAvatar}>{friend.avatar || '👤'}</Text>
+                  {friend.isOnline && <View style={styles.onlineIndicator} />}
+                </View>
+                <View style={styles.friendDetails}>
+                  <Text style={styles.friendName}>{friend.displayName}</Text>
+                  <Text style={styles.friendUsername}>@{friend.username}</Text>
+                  {friend.isOnline ? (
+                    <View style={styles.activityBadge}>
+                      <MaterialCommunityIcons name="circle" size={8} color="#10B981" />
+                      <Text style={styles.activityText}>Online now</Text>
+                    </View>
+                  ) : friend.lastSeen ? (
+                    <Text style={styles.lastSeen}>
+                      Last seen {toJSDate(friend.lastSeen).toLocaleDateString()}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.moreButton}
+                onPress={() => handleRemoveFriend(friend.id)}
+              >
+                <MaterialCommunityIcons name="account-remove" size={20} color="#EF4444" />
+              </TouchableOpacity>
+            </TouchableOpacity>
+          ))
+        )}
+      </View>
+
       <View style={styles.bottomSpacing} />
     </ScrollView>
   );
@@ -305,11 +487,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#9CA3AF',
     marginTop: 2,
-  },
-  requestTime: {
-    fontSize: 11,
-    color: '#9CA3AF',
-    marginTop: 4,
   },
   requestActions: {
     flexDirection: 'row',
@@ -421,11 +598,6 @@ const styles = StyleSheet.create({
   friendDetails: {
     flex: 1,
   },
-  friendNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
   friendName: {
     fontSize: 15,
     fontWeight: '600',
@@ -450,28 +622,11 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     marginTop: 2,
   },
-  friendsSince: {
-    fontSize: 11,
-    color: '#9CA3AF',
-    marginTop: 2,
-  },
-  friendActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  messageButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#EFF6FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   moreButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#FEE2E2',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -491,10 +646,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#9CA3AF',
     marginTop: 4,
+    textAlign: 'center',
+    paddingHorizontal: 32,
   },
   suggestionsSection: {
     padding: 16,
-    paddingTop: 0,
+    paddingBottom: 0,
   },
   suggestionCard: {
     backgroundColor: 'white',
@@ -530,16 +687,6 @@ const styles = StyleSheet.create({
   suggestionUsername: {
     fontSize: 13,
     color: '#6B7280',
-  },
-  suggestionBio: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    marginTop: 2,
-  },
-  mutualFriends: {
-    fontSize: 11,
-    color: '#2563EB',
-    marginTop: 4,
   },
   addButton: {
     width: 40,
