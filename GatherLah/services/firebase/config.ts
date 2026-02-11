@@ -49,6 +49,11 @@ export const COLLECTIONS = {
   COMMUNITY_EVENTS: "communityEvents",
   STREAKS: "streaks",
   MENTAL_WELLNESS_LOGS: "mentalWellnessLogs",
+  // AI Social Agent collections
+  USER_ACTIVITY: "userActivity",
+  LONELINESS_SCORES: "lonelinessScores",
+  AI_NUDGES: "aiNudges",
+  AGENT_MEMORY: "agentMemory",
 };
 
 export { app, auth, db, storage };
