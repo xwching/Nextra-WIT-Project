@@ -147,17 +147,55 @@ export class AuthService {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
 
+      // Get user data
+      const userDocRef = doc(db, COLLECTIONS.USERS, firebaseUser.uid);
+      const userDoc = await getDoc(userDocRef);
+
+      if (!userDoc.exists()) {
+        // Firestore doc missing - recreate from Firebase Auth data
+        const username = firebaseUser.email?.split('@')[0] || 'user';
+        const newUser: User = {
+          id: firebaseUser.uid,
+          email: firebaseUser.email || email,
+          username: username,
+          displayName: firebaseUser.displayName || username,
+          avatar: this.generateDefaultAvatar(username),
+          bio: '',
+          accountType: AccountType.NORMAL,
+          interests: [],
+          friendsCount: 0,
+          followersCount: 0,
+          followingCount: 0,
+          level: 1,
+          experiencePoints: 0,
+          currentStreak: 0,
+          longestStreak: 0,
+          totalEventsJoined: 0,
+          totalEventsCreated: 0,
+          moodHistory: [],
+          wellnessScore: 100,
+          isOnline: true,
+          lastSeen: new Date(),
+          notificationSettings: this.getDefaultNotificationSettings(),
+          privacySettings: this.getDefaultPrivacySettings(AccountType.NORMAL),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
+        await setDoc(userDocRef, {
+          ...newUser,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        return newUser;
+      }
+
       // Update online status
-      await updateDoc(doc(db, COLLECTIONS.USERS, firebaseUser.uid), {
+      await updateDoc(userDocRef, {
         isOnline: true,
         lastSeen: serverTimestamp(),
       });
-
-      // Get user data
-      const userDoc = await getDoc(doc(db, COLLECTIONS.USERS, firebaseUser.uid));
-      if (!userDoc.exists()) {
-        throw new Error('User data not found');
-      }
 
       return { id: firebaseUser.uid, ...userDoc.data() } as User;
     } catch (error: any) {

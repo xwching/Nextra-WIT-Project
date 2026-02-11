@@ -21,6 +21,7 @@ import { db, COLLECTIONS } from '@/services/firebase/config';
 import { User } from '@/types/user.types';
 import { FriendRequest, FriendRequestStatus, Friendship } from '@/types/social.types';
 import { AppColors } from '@/constants/colors';
+import { seedSampleUsers } from '@/services/data/seed-users';
 
 type ActiveTab = 'friends' | 'requests' | 'discover';
 type FriendFilter = 'all' | 'online';
@@ -106,6 +107,9 @@ export default function FriendsScreen() {
     if (!userId) return;
     setSuggestionsLoading(true);
     try {
+      // Auto-seed sample users silently so there's always content
+      try { await seedSampleUsers(); } catch (_) { /* ignore seed errors */ }
+
       const results = await FriendsAPI.getFriendSuggestions(userId, 15);
       setSuggestions(results);
     } catch (err: any) {
@@ -555,17 +559,28 @@ export default function FriendsScreen() {
             <MaterialCommunityIcons name="account-search" size={48} color="#D1D5DB" />
             <Text style={styles.emptyTitle}>No suggestions yet</Text>
             <Text style={styles.emptySubtext}>
-              Add interests to your profile to get personalized suggestions
+              Add interests to your profile to get personalized suggestions. Pull down to refresh!
             </Text>
           </View>
         ) : (
           suggestions.map(s => (
             <View key={s.id} style={styles.suggestionCard}>
               <View style={styles.userInfo}>
-                <Text style={styles.avatarText}>{s.avatar || '👤'}</Text>
+                <View style={styles.suggestionAvatarWrap}>
+                  <Text style={styles.suggestionAvatarLarge}>{s.avatar || '👤'}</Text>
+                  {s.isOnline && <View style={styles.onlineIndicator} />}
+                </View>
                 <View style={styles.userDetails}>
-                  <Text style={styles.userName}>{s.displayName}</Text>
+                  <View style={styles.suggestionNameRow}>
+                    <Text style={styles.userName}>{s.displayName}</Text>
+                    <View style={styles.levelBadge}>
+                      <Text style={styles.levelBadgeText}>Lv.{s.level || 1}</Text>
+                    </View>
+                  </View>
                   <Text style={styles.userHandle}>@{s.username}</Text>
+                  {s.bio ? (
+                    <Text style={styles.suggestionBio} numberOfLines={1}>{s.bio}</Text>
+                  ) : null}
                   {/* Mutual friends & shared interests */}
                   <View style={styles.suggestionMeta}>
                     {(s.mutualCount || 0) > 0 && (
@@ -584,6 +599,12 @@ export default function FriendsScreen() {
                         </Text>
                       </View>
                     )}
+                    {s.totalEventsJoined ? (
+                      <View style={styles.metaChip}>
+                        <MaterialCommunityIcons name="calendar-check" size={12} color="#10B981" />
+                        <Text style={styles.metaChipText}>{s.totalEventsJoined} events</Text>
+                      </View>
+                    ) : null}
                   </View>
                   {/* Show first few shared interests as tags */}
                   {(s.sharedInterests?.length || 0) > 0 && (
@@ -1007,6 +1028,33 @@ const styles = StyleSheet.create({
   },
 
   // Suggestion Card
+  suggestionAvatarWrap: {
+    position: 'relative',
+  },
+  suggestionAvatarLarge: {
+    fontSize: 36,
+  },
+  suggestionNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  levelBadge: {
+    backgroundColor: '#EDE9FE',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  levelBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: AppColors.primary.main,
+  },
+  suggestionBio: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
   suggestionCard: {
     backgroundColor: 'white',
     borderRadius: 12,

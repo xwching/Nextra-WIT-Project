@@ -308,28 +308,42 @@ export class FriendsAPI {
    */
   static async getFriendSuggestions(userId: string, limitCount: number = 10): Promise<(User & { mutualCount?: number; sharedInterests?: string[] })[]> {
     try {
-      // Get user's current friends
-      const friendsSnap = await getDocs(collection(db, `${COLLECTIONS.USERS}/${userId}/friends`));
-      const friendIds = friendsSnap.docs.map(d => {
-        const friendship = d.data() as Friendship;
-        return friendship.userId1 === userId ? friendship.userId2 : friendship.userId1;
-      });
+      // Get user's current friends (safe - subcollection, no index needed)
+      let friendIds: string[] = [];
+      try {
+        const friendsSnap = await getDocs(collection(db, `${COLLECTIONS.USERS}/${userId}/friends`));
+        friendIds = friendsSnap.docs.map(d => {
+          const friendship = d.data() as Friendship;
+          return friendship.userId1 === userId ? friendship.userId2 : friendship.userId1;
+        });
+      } catch (e) {
+        console.warn('Could not fetch friends list:', e);
+      }
 
-      // Get pending request user IDs (both sent and received) to exclude
-      const sentQuery = query(
-        collection(db, COLLECTIONS.FRIEND_REQUESTS),
-        where('senderId', '==', userId),
-        where('status', '==', FriendRequestStatus.PENDING)
-      );
-      const receivedQuery = query(
-        collection(db, COLLECTIONS.FRIEND_REQUESTS),
-        where('receiverId', '==', userId),
-        where('status', '==', FriendRequestStatus.PENDING)
-      );
-      const [sentSnap, receivedSnap] = await Promise.all([getDocs(sentQuery), getDocs(receivedQuery)]);
+      // Try to get pending request user IDs to exclude (may fail without composite index)
       const pendingIds = new Set<string>();
-      sentSnap.docs.forEach(d => pendingIds.add(d.data().receiverId));
-      receivedSnap.docs.forEach(d => pendingIds.add(d.data().senderId));
+      try {
+        const sentQuery = query(
+          collection(db, COLLECTIONS.FRIEND_REQUESTS),
+          where('senderId', '==', userId),
+          where('status', '==', FriendRequestStatus.PENDING)
+        );
+        const sentSnap = await getDocs(sentQuery);
+        sentSnap.docs.forEach(d => pendingIds.add(d.data().receiverId));
+      } catch (e) {
+        console.warn('Skipping sent requests exclusion (index may be needed):', e);
+      }
+      try {
+        const receivedQuery = query(
+          collection(db, COLLECTIONS.FRIEND_REQUESTS),
+          where('receiverId', '==', userId),
+          where('status', '==', FriendRequestStatus.PENDING)
+        );
+        const receivedSnap = await getDocs(receivedQuery);
+        receivedSnap.docs.forEach(d => pendingIds.add(d.data().senderId));
+      } catch (e) {
+        console.warn('Skipping received requests exclusion (index may be needed):', e);
+      }
 
       const excludeIds = new Set([userId, ...friendIds, ...pendingIds]);
 
@@ -342,28 +356,35 @@ export class FriendsAPI {
 
       // If user has interests, find users with shared interests
       if (userInterests.length > 0) {
-        const suggestionsQuery = query(
-          collection(db, COLLECTIONS.USERS),
-          where('interests', 'array-contains-any', userInterests.slice(0, 10)),
-          limit(limitCount * 3)
-        );
-        const snap = await getDocs(suggestionsQuery);
-        candidateDocs = snap.docs;
+        try {
+          const suggestionsQuery = query(
+            collection(db, COLLECTIONS.USERS),
+            where('interests', 'array-contains-any', userInterests.slice(0, 10)),
+            limit(limitCount * 3)
+          );
+          const snap = await getDocs(suggestionsQuery);
+          candidateDocs = snap.docs;
+        } catch (e) {
+          console.warn('Interest-based query failed:', e);
+        }
       }
 
-      // Fallback: if not enough results, fetch recent users
+      // Fallback: fetch users without orderBy (avoids needing an index)
       if (candidateDocs.length < limitCount) {
-        const fallbackQuery = query(
-          collection(db, COLLECTIONS.USERS),
-          orderBy('createdAt', 'desc'),
-          limit(limitCount * 3)
-        );
-        const fallbackSnap = await getDocs(fallbackQuery);
-        const existingIds = new Set(candidateDocs.map((d: any) => d.id));
-        for (const d of fallbackSnap.docs) {
-          if (!existingIds.has(d.id)) {
-            candidateDocs.push(d);
+        try {
+          const fallbackQuery = query(
+            collection(db, COLLECTIONS.USERS),
+            limit(limitCount * 3)
+          );
+          const fallbackSnap = await getDocs(fallbackQuery);
+          const existingIds = new Set(candidateDocs.map((d: any) => d.id));
+          for (const d of fallbackSnap.docs) {
+            if (!existingIds.has(d.id)) {
+              candidateDocs.push(d);
+            }
           }
+        } catch (e) {
+          console.warn('Fallback query failed:', e);
         }
       }
 
@@ -379,15 +400,19 @@ export class FriendsAPI {
         // Calculate shared interests
         const shared = (u.interests || []).filter((i: string) => userInterests.includes(i));
 
-        // Count mutual friends
+        // Count mutual friends (skip if user has no friends to avoid unnecessary reads)
         let mutualCount = 0;
         if (friendIds.length > 0) {
-          const theirFriendsSnap = await getDocs(collection(db, `${COLLECTIONS.USERS}/${u.id}/friends`));
-          const theirFriendIds = theirFriendsSnap.docs.map(fd => {
-            const f = fd.data() as Friendship;
-            return f.userId1 === u.id ? f.userId2 : f.userId1;
-          });
-          mutualCount = theirFriendIds.filter(id => friendIds.includes(id)).length;
+          try {
+            const theirFriendsSnap = await getDocs(collection(db, `${COLLECTIONS.USERS}/${u.id}/friends`));
+            const theirFriendIds = theirFriendsSnap.docs.map(fd => {
+              const f = fd.data() as Friendship;
+              return f.userId1 === u.id ? f.userId2 : f.userId1;
+            });
+            mutualCount = theirFriendIds.filter(id => friendIds.includes(id)).length;
+          } catch (e) {
+            // Skip mutual count if subcollection read fails
+          }
         }
 
         suggestions.push({ ...u, mutualCount, sharedInterests: shared });
@@ -402,7 +427,7 @@ export class FriendsAPI {
       return suggestions;
     } catch (error: any) {
       console.error('Get friend suggestions error:', error);
-      throw new Error(error.message || 'Failed to get friend suggestions');
+      return []; // Return empty instead of throwing so UI still works
     }
   }
 
