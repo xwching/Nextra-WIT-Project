@@ -1,27 +1,29 @@
-import React, { useState } from 'react';
+import { CustomBadge } from "@/components/ui/custom-badge";
+import { CategoryColors } from "@/constants/colors";
+import { mockEvents, mockUsers } from "@/constants/mockData";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
   Pressable,
-} from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { CustomBadge } from '@/components/ui/custom-badge';
-import { mockEvents, mockUsers } from '@/constants/mockData';
-import { CategoryColors, AppColors } from '@/constants/colors';
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
 export default function EventDetailScreen() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'chats' | 'posts' | 'entries' | 'members'>('chats');
-  const [postMessage, setPostMessage] = useState('');
+  const [activeTab, setActiveTab] = useState<
+    "chats" | "posts" | "entries" | "members"
+  >("chats");
+  const [postMessage, setPostMessage] = useState("");
 
-  const event = mockEvents.find(e => e.id === id);
+  const event = mockEvents.find((e) => e.id === id);
 
   if (!event) {
     return (
@@ -32,37 +34,63 @@ export default function EventDetailScreen() {
   }
 
   const startTime = new Date(event.startTime);
-  const attendees = [...event.friendsAttending, ...mockUsers.slice(0, 3)];
-  const categoryColor = CategoryColors[event.type as keyof typeof CategoryColors];
+  // Merge friendsAttending with some mock users but remove duplicates
+  const attendees = Array.from(
+    new Map(
+      [...event.friendsAttending, ...mockUsers.slice(0, 3)].map((u) => [
+        u.id,
+        u,
+      ]),
+    ).values(),
+  );
+  const categoryColor =
+    CategoryColors[event.type as keyof typeof CategoryColors];
 
   const groupChats = [
-    { id: 1, name: 'Main Discussion', members: 5, maxMembers: 5, messages: 23 },
-    { id: 2, name: 'Random Chat', members: 4, maxMembers: 5, messages: 12 },
-    { id: 3, name: 'Beginner Group', members: 3, maxMembers: 5, messages: 8 },
+    { id: 1, name: "Main Discussion", members: 5, maxMembers: 5, messages: 23 },
+    { id: 2, name: "Random Chat", members: 4, maxMembers: 5, messages: 12 },
+    { id: 3, name: "Beginner Group", members: 3, maxMembers: 5, messages: 8 },
   ];
 
   const posts = [
-    { user: mockUsers[0], content: "Can't wait to get started! Anyone else excited?", time: '5 mins ago', likes: 3 },
-    { user: mockUsers[1], content: 'First time joining this type of event. Any tips?', time: '12 mins ago', likes: 5 },
+    {
+      user: mockUsers[0],
+      content: "Can't wait to get started! Anyone else excited?",
+      time: "5 mins ago",
+      likes: 3,
+    },
+    {
+      user: mockUsers[1],
+      content: "First time joining this type of event. Any tips?",
+      time: "12 mins ago",
+      likes: 5,
+    },
   ];
 
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backButton}
+        >
           <MaterialCommunityIcons name="arrow-left" size={24} color="#111827" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Event Details</Text>
         <TouchableOpacity style={styles.shareButton}>
-          <MaterialCommunityIcons name="share-variant" size={20} color="#111827" />
+          <MaterialCommunityIcons
+            name="share-variant"
+            size={20}
+            color="#111827"
+          />
         </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {/* Event Header with Gradient */}
         <LinearGradient
-          colors={[categoryColor.bg, 'white']}
+          colors={[categoryColor.bg, "white"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
           style={styles.eventHeader}
@@ -79,24 +107,40 @@ export default function EventDetailScreen() {
           {/* Event Meta */}
           <View style={styles.metaContainer}>
             <View style={styles.metaRow}>
-              <MaterialCommunityIcons name="clock-outline" size={20} color="#9CA3AF" />
+              <MaterialCommunityIcons
+                name="clock-outline"
+                size={20}
+                color="#9CA3AF"
+              />
               <Text style={styles.metaText}>
-                {startTime.toLocaleDateString('en-US', {
-                  weekday: 'short',
-                  month: 'short',
-                  day: 'numeric',
-                  hour: 'numeric',
-                  minute: '2-digit'
+                {startTime.toLocaleDateString("en-US", {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
                 })}
               </Text>
             </View>
             <View style={styles.metaRow}>
-              <MaterialCommunityIcons name="account-group" size={20} color="#9CA3AF" />
-              <Text style={styles.metaText}>{event.participants}/{event.maxParticipants} joined</Text>
+              <MaterialCommunityIcons
+                name="account-group"
+                size={20}
+                color="#9CA3AF"
+              />
+              <Text style={styles.metaText}>
+                {event.participants}/{event.maxParticipants} joined
+              </Text>
             </View>
             <View style={styles.metaRow}>
-              <MaterialCommunityIcons name="map-marker" size={20} color="#9CA3AF" />
-              <Text style={[styles.metaText, { textTransform: 'capitalize' }]}>{event.location}</Text>
+              <MaterialCommunityIcons
+                name="map-marker"
+                size={20}
+                color="#9CA3AF"
+              />
+              <Text style={[styles.metaText, { textTransform: "capitalize" }]}>
+                {event.location}
+              </Text>
             </View>
           </View>
 
@@ -108,7 +152,11 @@ export default function EventDetailScreen() {
               <Text style={styles.hostName}>{event.host.name}</Text>
             </View>
             <TouchableOpacity style={styles.addButton}>
-              <MaterialCommunityIcons name="account-plus" size={16} color="#374151" />
+              <MaterialCommunityIcons
+                name="account-plus"
+                size={16}
+                color="#374151"
+              />
               <Text style={styles.addButtonText}>Add</Text>
             </TouchableOpacity>
           </View>
@@ -120,14 +168,16 @@ export default function EventDetailScreen() {
                 👥 {event.friendsAttending.length} friends attending
               </Text>
               <View style={styles.friendsAvatars}>
-                {event.friendsAttending.slice(0, 5).map(friend => (
+                {event.friendsAttending.slice(0, 5).map((friend) => (
                   <View key={friend.id} style={styles.friendAvatar}>
                     <Text style={styles.friendAvatarText}>{friend.avatar}</Text>
                   </View>
                 ))}
                 {event.friendsAttending.length > 5 && (
                   <View style={[styles.friendAvatar, styles.friendAvatarMore]}>
-                    <Text style={styles.friendAvatarMoreText}>+{event.friendsAttending.length - 5}</Text>
+                    <Text style={styles.friendAvatarMoreText}>
+                      +{event.friendsAttending.length - 5}
+                    </Text>
                   </View>
                 )}
               </View>
@@ -136,23 +186,31 @@ export default function EventDetailScreen() {
 
           {/* Action Button */}
           <Pressable
-            style={[styles.actionButton, event.isLive && styles.actionButtonLive]}
+            style={[
+              styles.actionButton,
+              event.isLive && styles.actionButtonLive,
+            ]}
           >
             <Text style={styles.actionButtonText}>
-              {event.isLive ? '🎉 Join Now' : '✓ Joined - View Details'}
+              {event.isLive ? "🎉 Join Now" : "✓ Joined - View Details"}
             </Text>
           </Pressable>
         </LinearGradient>
 
         {/* Tabs */}
         <View style={styles.tabs}>
-          {['chats', 'posts', 'entries', 'members'].map(tab => (
+          {["chats", "posts", "entries", "members"].map((tab) => (
             <TouchableOpacity
               key={tab}
               style={[styles.tab, activeTab === tab && styles.tabActive]}
               onPress={() => setActiveTab(tab as any)}
             >
-              <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
+              <Text
+                style={[
+                  styles.tabText,
+                  activeTab === tab && styles.tabTextActive,
+                ]}
+              >
                 {tab.toUpperCase()}
               </Text>
             </TouchableOpacity>
@@ -161,20 +219,26 @@ export default function EventDetailScreen() {
 
         {/* Tab Content */}
         <View style={styles.tabContent}>
-          {activeTab === 'chats' && (
+          {activeTab === "chats" && (
             <View>
               <Text style={styles.tabDescription}>
                 Join a group chat to connect with other participants
               </Text>
-              {groupChats.map(chat => (
+              {groupChats.map((chat) => (
                 <View key={chat.id} style={styles.chatCard}>
                   <View style={styles.chatHeader}>
                     <View style={styles.chatInfo}>
                       <View style={styles.chatTitleRow}>
-                        <MaterialCommunityIcons name="message-text" size={20} color="#2563EB" />
+                        <MaterialCommunityIcons
+                          name="message-text"
+                          size={20}
+                          color="#2563EB"
+                        />
                         <Text style={styles.chatName}>{chat.name}</Text>
                       </View>
-                      <Text style={styles.chatMessages}>{chat.messages} messages</Text>
+                      <Text style={styles.chatMessages}>
+                        {chat.messages} messages
+                      </Text>
                     </View>
                     <View style={styles.chatMeta}>
                       <CustomBadge variant="outline" size="sm">
@@ -186,12 +250,13 @@ export default function EventDetailScreen() {
                   <TouchableOpacity
                     style={[
                       styles.joinChatButton,
-                      chat.members === chat.maxMembers && styles.joinChatButtonDisabled,
+                      chat.members === chat.maxMembers &&
+                        styles.joinChatButtonDisabled,
                     ]}
                     disabled={chat.members === chat.maxMembers}
                   >
                     <Text style={styles.joinChatButtonText}>
-                      {chat.members === chat.maxMembers ? 'Full' : 'Join Chat'}
+                      {chat.members === chat.maxMembers ? "Full" : "Join Chat"}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -199,7 +264,7 @@ export default function EventDetailScreen() {
             </View>
           )}
 
-          {activeTab === 'posts' && (
+          {activeTab === "posts" && (
             <View>
               <View style={styles.postInputContainer}>
                 <TextInput
@@ -235,22 +300,26 @@ export default function EventDetailScreen() {
             </View>
           )}
 
-          {activeTab === 'entries' && (
+          {activeTab === "entries" && (
             <View style={styles.emptyTab}>
               <Text style={styles.emptyTabText}>No entries yet</Text>
-              <Text style={styles.emptyTabSubtext}>Share your work when the event starts!</Text>
+              <Text style={styles.emptyTabSubtext}>
+                Share your work when the event starts!
+              </Text>
             </View>
           )}
 
-          {activeTab === 'members' && (
+          {activeTab === "members" && (
             <View>
               <View style={styles.membersHeader}>
-                <Text style={styles.membersTitle}>All Members ({attendees.length})</Text>
+                <Text style={styles.membersTitle}>
+                  All Members ({attendees.length})
+                </Text>
                 <TouchableOpacity>
                   <Text style={styles.filterLink}>Filter</Text>
                 </TouchableOpacity>
               </View>
-              {attendees.map(user => (
+              {attendees.map((user) => (
                 <View key={user.id} style={styles.memberCard}>
                   <View style={styles.memberInfo}>
                     <View style={styles.memberAvatarContainer}>
@@ -261,10 +330,14 @@ export default function EventDetailScreen() {
                       <View style={styles.memberNameRow}>
                         <Text style={styles.memberName}>{user.name}</Text>
                         {user.isFriend && (
-                          <CustomBadge variant="outline" size="sm">Friend</CustomBadge>
+                          <CustomBadge variant="outline" size="sm">
+                            Friend
+                          </CustomBadge>
                         )}
                       </View>
-                      <Text style={styles.memberUsername}>@{user.username}</Text>
+                      <Text style={styles.memberUsername}>
+                        @{user.username}
+                      </Text>
                     </View>
                   </View>
                   {!user.isFriend && (
@@ -285,24 +358,24 @@ export default function EventDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: "white",
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: "#E5E7EB",
   },
   backButton: {
     padding: 4,
   },
   headerTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: "600",
+    color: "#111827",
     flex: 1,
     marginLeft: 12,
   },
@@ -315,22 +388,22 @@ const styles = StyleSheet.create({
   eventHeader: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: "#E5E7EB",
   },
   badges: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 8,
     marginBottom: 8,
   },
   eventTitle: {
     fontSize: 24,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: "600",
+    color: "#111827",
     marginBottom: 8,
   },
   eventDescription: {
     fontSize: 16,
-    color: '#6B7280',
+    color: "#6B7280",
     marginBottom: 16,
   },
   metaContainer: {
@@ -338,19 +411,19 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 12,
   },
   metaText: {
     fontSize: 14,
-    color: '#374151',
+    color: "#374151",
   },
   hostContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     padding: 12,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: "#F9FAFB",
     borderRadius: 12,
     marginBottom: 16,
   },
@@ -363,166 +436,166 @@ const styles = StyleSheet.create({
   },
   hostLabel: {
     fontSize: 12,
-    color: '#6B7280',
+    color: "#6B7280",
   },
   hostName: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: "600",
+    color: "#111827",
   },
   addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 4,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: "#E5E7EB",
   },
   addButtonText: {
     fontSize: 14,
-    color: '#374151',
+    color: "#374151",
   },
   friendsContainer: {
     padding: 12,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: "#EFF6FF",
     borderRadius: 12,
     marginBottom: 16,
   },
   friendsText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#1E3A8A',
+    fontWeight: "600",
+    color: "#1E3A8A",
     marginBottom: 8,
   },
   friendsAvatars: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: -8,
   },
   friendAvatar: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'white',
+    backgroundColor: "white",
     borderWidth: 2,
-    borderColor: 'white',
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderColor: "white",
+    justifyContent: "center",
+    alignItems: "center",
   },
   friendAvatarText: {
     fontSize: 18,
   },
   friendAvatarMore: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: "#E5E7EB",
   },
   friendAvatarMoreText: {
     fontSize: 10,
-    color: '#374151',
+    color: "#374151",
   },
   actionButton: {
-    backgroundColor: '#2563EB',
+    backgroundColor: "#2563EB",
     paddingVertical: 14,
     borderRadius: 12,
-    alignItems: 'center',
+    alignItems: "center",
   },
   actionButtonLive: {
-    backgroundColor: '#DC2626',
+    backgroundColor: "#DC2626",
   },
   actionButtonText: {
-    color: 'white',
+    color: "white",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   tabs: {
-    flexDirection: 'row',
+    flexDirection: "row",
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: "#E5E7EB",
   },
   tab: {
     flex: 1,
     paddingVertical: 14,
-    alignItems: 'center',
+    alignItems: "center",
     borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
+    borderBottomColor: "transparent",
   },
   tabActive: {
-    borderBottomColor: '#2563EB',
+    borderBottomColor: "#2563EB",
   },
   tabText: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#6B7280',
+    fontWeight: "700",
+    color: "#6B7280",
   },
   tabTextActive: {
-    color: '#2563EB',
+    color: "#2563EB",
   },
   tabContent: {
     padding: 16,
   },
   tabDescription: {
     fontSize: 14,
-    color: '#6B7280',
+    color: "#6B7280",
     marginBottom: 16,
   },
   chatCard: {
-    backgroundColor: 'white',
+    backgroundColor: "white",
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     elevation: 2,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
   chatHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     marginBottom: 12,
   },
   chatInfo: {
     flex: 1,
   },
   chatTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
     marginBottom: 4,
   },
   chatName: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: "600",
+    color: "#111827",
   },
   chatMessages: {
     fontSize: 14,
-    color: '#6B7280',
+    color: "#6B7280",
   },
   chatMeta: {
-    alignItems: 'flex-end',
+    alignItems: "flex-end",
   },
   chatMetaLabel: {
     fontSize: 11,
-    color: '#9CA3AF',
+    color: "#9CA3AF",
     marginTop: 4,
   },
   joinChatButton: {
-    backgroundColor: '#2563EB',
+    backgroundColor: "#2563EB",
     paddingVertical: 10,
     borderRadius: 8,
-    alignItems: 'center',
+    alignItems: "center",
   },
   joinChatButtonDisabled: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: "#E5E7EB",
   },
   joinChatButtonText: {
-    color: 'white',
+    color: "white",
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   postInputContainer: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 8,
     marginBottom: 16,
   },
@@ -531,7 +604,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: "#E5E7EB",
     borderRadius: 24,
     fontSize: 14,
   },
@@ -539,23 +612,23 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#2563EB',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#2563EB",
+    justifyContent: "center",
+    alignItems: "center",
   },
   postCard: {
-    backgroundColor: 'white',
+    backgroundColor: "white",
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     elevation: 2,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
   postHeader: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 12,
     marginBottom: 12,
   },
@@ -567,123 +640,123 @@ const styles = StyleSheet.create({
   },
   postUserName: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: "600",
+    color: "#111827",
   },
   postTime: {
     fontSize: 11,
-    color: '#9CA3AF',
+    color: "#9CA3AF",
   },
   postContent: {
     fontSize: 14,
-    color: '#374151',
+    color: "#374151",
     marginBottom: 12,
     lineHeight: 20,
   },
   postActions: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 16,
   },
   postAction: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 4,
   },
   postActionText: {
     fontSize: 14,
-    color: '#6B7280',
+    color: "#6B7280",
   },
   emptyTab: {
     paddingVertical: 48,
-    alignItems: 'center',
+    alignItems: "center",
   },
   emptyTabText: {
     fontSize: 16,
-    color: '#6B7280',
+    color: "#6B7280",
     marginBottom: 4,
   },
   emptyTabSubtext: {
     fontSize: 14,
-    color: '#9CA3AF',
+    color: "#9CA3AF",
   },
   membersHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 16,
   },
   membersTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: "600",
+    color: "#111827",
   },
   filterLink: {
     fontSize: 14,
-    color: '#2563EB',
+    color: "#2563EB",
   },
   memberCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'white',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "white",
     borderRadius: 12,
     padding: 12,
     marginBottom: 8,
     elevation: 2,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
   memberInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     flex: 1,
   },
   memberAvatarContainer: {
-    position: 'relative',
+    position: "relative",
   },
   memberAvatar: {
     fontSize: 24,
   },
   onlineIndicator: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 0,
     right: 0,
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#10B981',
+    backgroundColor: "#10B981",
     borderWidth: 1,
-    borderColor: 'white',
+    borderColor: "white",
   },
   memberDetails: {
     marginLeft: 12,
     flex: 1,
   },
   memberNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
   },
   memberName: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: "600",
+    color: "#111827",
   },
   memberUsername: {
     fontSize: 12,
-    color: '#6B7280',
+    color: "#6B7280",
   },
   memberAddButton: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: "#E5E7EB",
   },
   memberAddButtonText: {
     fontSize: 14,
-    color: '#374151',
+    color: "#374151",
   },
 });

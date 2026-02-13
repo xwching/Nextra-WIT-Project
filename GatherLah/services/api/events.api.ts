@@ -55,8 +55,16 @@ export class EventsAPI {
         updatedAt: new Date(),
       };
 
+      // Remove undefined and null values - Firestore does not accept undefined
+      const eventDoc: Record<string, any> = {};
+      for (const [key, value] of Object.entries(newEvent)) {
+        if (value !== undefined && value !== null) {
+          eventDoc[key] = value;
+        }
+      }
+
       await setDoc(doc(db, COLLECTIONS.EVENTS, eventId), {
-        ...newEvent,
+        ...eventDoc,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });

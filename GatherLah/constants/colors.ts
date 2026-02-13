@@ -5,7 +5,7 @@ export const AppColors = {
     main: '#7C3AED', // Vibrant Purple
     light: '#A78BFA',
     dark: '#5B21B6',
-    gradient: ['#7C3AED', '#3B82F6'], // Purple to Blue
+    gradient: ['#7C3AED', '#3B82F6'] as const, // Purple to Blue
   },
 
   // Secondary Colors - Energetic Orange/Pink
@@ -13,7 +13,7 @@ export const AppColors = {
     main: '#F59E0B', // Warm Orange
     light: '#FCD34D',
     dark: '#D97706',
-    gradient: ['#F59E0B', '#EF4444'], // Orange to Red
+    gradient: ['#F59E0B', '#EF4444'] as const, // Orange to Red
   },
 
   // Accent Colors - Fresh Teal/Green
@@ -21,7 +21,7 @@ export const AppColors = {
     main: '#10B981', // Emerald Green
     light: '#6EE7B7',
     dark: '#059669',
-    gradient: ['#10B981', '#06B6D4'], // Green to Cyan
+    gradient: ['#10B981', '#06B6D4'] as const, // Green to Cyan
   },
 
   // Background Colors
@@ -52,14 +52,14 @@ export const AppColors = {
 
   // Card Gradients
   gradients: {
-    purple: ['#7C3AED', '#A78BFA'],
-    blue: ['#3B82F6', '#60A5FA'],
-    pink: ['#EC4899', '#F472B6'],
-    orange: ['#F59E0B', '#FBBF24'],
-    green: ['#10B981', '#34D399'],
-    teal: ['#06B6D4', '#22D3EE'],
-    sunset: ['#F59E0B', '#EC4899', '#7C3AED'],
-    ocean: ['#06B6D4', '#3B82F6', '#7C3AED'],
+    purple: ['#7C3AED', '#A78BFA'] as const,
+    blue: ['#3B82F6', '#60A5FA'] as const,
+    pink: ['#EC4899', '#F472B6'] as const,
+    orange: ['#F59E0B', '#FBBF24'] as const,
+    green: ['#10B981', '#34D399'] as const,
+    teal: ['#06B6D4', '#22D3EE'] as const,
+    sunset: ['#F59E0B', '#EC4899', '#7C3AED'] as const,
+    ocean: ['#06B6D4', '#3B82F6', '#7C3AED'] as const,
   },
 
   // Border Colors
